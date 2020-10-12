@@ -47,7 +47,9 @@ bool fake_send = false;
 bool loopback_can = false;
 cereal::HealthData::HwType hw_type = cereal::HealthData::HwType::UNKNOWN;
 bool is_pigeon = false;
-const uint32_t NO_IGNITION_CNT_MAX = 2 * 60 * 60 * 24 * 3;  // turn off charge after 3 days
+// OLD EON code, RP doesn't need charging, but does need turned off after short period 
+//const uint32_t NO_IGNITION_CNT_MAX = 2 * 60 * 60 * 24 * 3;  // turn off charge after 3 days
+const uint32_t NO_IGNITION_CNT_MAX = 2 * 60 * 30;  // turn off USB power after 30 minutes
 uint32_t no_ignition_cnt = 0;
 bool connected_once = false;
 uint8_t ignition_last = 0;
@@ -344,15 +346,14 @@ void can_health(void *s) {
   } else {
     no_ignition_cnt = 0;
   }
+  LOGW("No ignition %d", no_ignition_cnt);
 
-//#ifndef __x86_64__
-//  if ((no_ignition_cnt > NO_IGNITION_CNT_MAX) && (health.usb_power_mode == (uint8_t)(cereal::HealthData::UsbPowerMode::CDP))) {
-//    LOGW("TURN OFF CHARGING!\n");
-//    pthread_mutex_lock(&usb_lock);
-//    libusb_control_transfer(dev_handle, 0xc0, 0xe6, (uint16_t)(cereal::HealthData::UsbPowerMode::CLIENT), 0, NULL, 0, TIMEOUT);
-//    pthread_mutex_unlock(&usb_lock);
-//  }
-//#endif
+  if (no_ignition_cnt > NO_IGNITION_CNT_MAX) {
+    LOGW("TURNING OFF SYSTEM!\n");
+    //Signal to panda that RP is turning off
+    libusb_control_transfer(dev_handle, 0x40, 0xe7, 1, 0, NULL, 0, TIMEOUT);
+    system("sudo shutdown -h now");
+  }
 
   // clear VIN, CarParams, and set new safety on car start
   if ((health.started != 0) && (ignition_last == 0)) {

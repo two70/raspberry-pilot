@@ -78,6 +78,11 @@ void started_interrupt_handler(uint8_t interrupt_line) {
     // jenky debounce
     delay(100000);
 
+      // set CDP usb power mode everytime that the car starts to make sure RP is powered on
+      if (current_board->check_ignition()) {
+        current_board->set_usb_power_mode(USB_POWER_CDP);
+      }
+
     #ifdef EON
       // set power savings mode here if on EON build
       int power_save_state = current_board->check_ignition() ? POWER_SAVE_STATUS_DISABLED : POWER_SAVE_STATUS_ENABLED;
@@ -461,6 +466,10 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
     case 0xe6:
       current_board->set_usb_power_mode(setup->b.wValue.w);
       break;
+    // **** 0xe7: RP signal that it is shutting down
+    case 0xe7:
+      turn_rp_off = 1;
+      puts("GOT POWER OFF SIGNAL FROM RP\n"); 
     // **** 0xf0: do k-line wValue pulse on uart2 for Acura
     case 0xf0:
       if (setup->b.wValue.w == 1U) {
@@ -577,9 +586,10 @@ void __attribute__ ((noinline)) enable_fpu(void) {
 
 uint64_t tcnt = 0;
 
-// go into NOOUTPUT when the EON does not send a heartbeat for this amount of seconds.
-#define EON_HEARTBEAT_IGNITION_CNT_ON 5U
-#define EON_HEARTBEAT_IGNITION_CNT_OFF 2U
+// go into NOOUTPUT when the RP does not send a heartbeat for this amount of seconds.
+#define RP_HEARTBEAT_IGNITION_CNT_ON 5U
+#define RP_HEARTBEAT_IGNITION_CNT_OFF 2U
+#define RP_HEARTBEAT_POWER_OFF 120U
 
 // called once per second
 // cppcheck-suppress unusedFunction ; used in headers not included in cppcheck
@@ -614,9 +624,9 @@ void TIM3_IRQHandler(void) {
       heartbeat_counter += 1U;
     }
 
-    // check heartbeat counter if we are running EON code. If the heartbeat has been gone for a while, go to NOOUTPUT safety mode.
-    if (heartbeat_counter >= (current_board->check_ignition() ? EON_HEARTBEAT_IGNITION_CNT_ON : EON_HEARTBEAT_IGNITION_CNT_OFF)) {
-      puts("EON hasn't sent a heartbeat for 0x"); puth(heartbeat_counter); puts(" seconds. Safety is set to NOOUTPUT mode.\n");
+    // check heartbeat counter if we are running RP code. If the heartbeat has been gone for a while, go to NOOUTPUT safety mode.
+    if (heartbeat_counter >= (current_board->check_ignition() ? RP_HEARTBEAT_IGNITION_CNT_ON : RP_HEARTBEAT_IGNITION_CNT_OFF)) {
+      puts("RP hasn't sent a heartbeat for 0x"); puth(heartbeat_counter); puts(" seconds. RP Power Signal"); puth(turn_rp_off); puts("\n");
       if((current_safety_mode != SAFETY_ALLOUTPUT) & (hw_type != HW_TYPE_BLACK_PANDA)) {
         set_safety_mode(SAFETY_ALLOUTPUT, 17);
       } else if ((current_safety_mode != SAFETY_NOOUTPUT) & (hw_type == HW_TYPE_BLACK_PANDA)) {
@@ -624,6 +634,12 @@ void TIM3_IRQHandler(void) {
       }
     }
 
+    // If we RP signaled it's turning off then wait 60 seconds to give RP time to properly shut down 
+    if ((heartbeat_counter >= RP_HEARTBEAT_POWER_OFF) & turn_rp_off) {
+      puts("TURN OFF USB\n"); 
+      current_board->set_usb_power_mode(USB_POWER_CLIENT);
+    } 
+    
     // on to the next one
     tcnt += 1U;
   }
